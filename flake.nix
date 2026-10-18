@@ -51,6 +51,13 @@
         default = packages.unstable-cpu;
       };
 
+      overlays.default = final: prev: {
+        # Keep the pinned inputs so these packages match the cache.
+        llama-cpp-bin =
+          assert prev.stdenv.hostPlatform.system == system;
+          packages;
+      };
+
       # Derivation checks evaluate every variant without requiring a GPU.
       checks.${system} = packages;
     };

@@ -1,108 +1,164 @@
 # llama-nix-bin
 
-Nightly Nix builds of `llama-cpp` for **x86_64-linux**, with a public Cachix binary cache.
+Prebuilt `llama-cpp` packages for **x86_64-linux**, updated nightly from `nixpkgs-unstable` and the latest stable NixOS release. Available backends: CPU, NVIDIA CUDA, AMD ROCm, and Vulkan.
+
+## Enable the binary cache
+
+Add the cache URL and public signing key to your Nix configuration. You do **not** need the Cachix CLI, an account, or this repository as a flake input.
+
+The public cache is at **https://llama-nix-bin.cachix.org**. Its public signing key is included in the examples below.
+
+For NixOS, add this to your system configuration, then run `sudo nixos-rebuild switch`:
+
+```nix
+{
+  nix.settings = {
+    extra-substituters = [ "https://llama-nix-bin.cachix.org" ];
+    extra-trusted-public-keys = [ "llama-nix-bin.cachix.org-1:FbrkA2/RiLOndFgV+MUyS5Cd9vpB4Df0W0CGeZi2ewU=" ];
+  };
+}
+```
+
+On other systems, add this to `/etc/nix/nix.conf`:
+
+```ini
+extra-substituters = https://llama-nix-bin.cachix.org
+extra-trusted-public-keys = llama-nix-bin.cachix.org-1:FbrkA2/RiLOndFgV+MUyS5Cd9vpB4Df0W0CGeZi2ewU=
+```
+
+Restart the Nix daemon after a change to its configuration. On Linux with systemd, use `sudo systemctl restart nix-daemon`. For a single-user installation, use `~/.config/nix/nix.conf`; no daemon restart is needed. A multi-user installation requires an administrator to configure the cache as trusted.
+
+The `extra-` settings keep your existing caches and keys, including `cache.nixos.org`.
+
+## Use your existing nixpkgs package
+
+Keep your current package configuration. Nix will check the cache automatically when it builds `llama-cpp`. For example, in a NixOS module:
+
+```nix
+{ pkgs, ... }:
+{
+  environment.systemPackages = [
+    (pkgs.llama-cpp.override {
+      cudaSupport = true;
+      rocmSupport = false;
+      vulkanSupport = false;
+      metalSupport = false;
+      openclSupport = false;
+      inherit (pkgs) cudaPackages;
+    })
+  ];
+}
+```
+
+CUDA dependencies are unfree. Permit their licences in your nixpkgs configuration, for example with `nixpkgs.config.allowUnfree = true;` after you review their terms. CPU, ROCm, and Vulkan variants do not need CUDA support.
+
+**A binary cache does not change your package version or build options.** A cache hit requires the same derivation: the nixpkgs revision, dependency versions, GPU targets, and build flags must match a cached build. A different nixpkgs revision can still match if those inputs did not change, but this is not guaranteed. If no matching binary is available, Nix builds the package locally.
+
+The cache stores the standard nixpkgs GPU targets. Custom GPU targets or CPU tuning can require a local build. Enable the correct GPU drivers and runtime on your host; the cache does not configure them.
+
+## Optional: use the pinned packages
+
+Use this repository's packages when you want the exact inputs used by the nightly builds. You can use them directly, without adding a flake input:
+
+```sh
+nix build github:LoricAndre/llama-nix-bin#unstable-cuda
+./result/bin/llama-server --model /path/to/model.gguf
+
+# Or run a server in a temporary shell:
+nix shell github:LoricAndre/llama-nix-bin#stable-vulkan --command llama-server --help
+```
+
+These commands require flakes to be enabled. Configure the cache separately as shown above.
 
 | nixpkgs source | CPU | NVIDIA CUDA | AMD ROCm | Vulkan |
 | --- | --- | --- | --- | --- |
 | `nixpkgs-unstable` | `unstable-cpu` | `unstable-cuda` | `unstable-rocm` | `unstable-vulkan` |
 | Latest stable NixOS release | `stable-cpu` | `stable-cuda` | `stable-rocm` | `stable-vulkan` |
 
-The default package is `unstable-cpu`. The CPU variant keeps the nixpkgs BLAS default. GPU variants use the GPU targets selected by their nixpkgs revision. No GPU is needed to compile them.
+The default package is `unstable-cpu`. The CPU variant keeps the nixpkgs BLAS default. Versions come from nixpkgs, not llama.cpp Git HEAD; stable can have an older version than unstable.
 
-## One-time setup
+### Nixpkgs overlay
 
-1. Make this repository public. Standard GitHub-hosted runners are free for public repositories.
-2. Create a **public** cache at [Cachix](https://app.cachix.org/).
-3. In GitHub **Settings → Secrets and variables → Actions**, add:
-   - Repository variable `CACHIX_CACHE`: your cache name.
-   - Repository secret `CACHIX_AUTH_TOKEN`: a Cachix token with permission to write to that cache.
-4. Permit GitHub Actions to write repository contents. Branch rules must permit the bot to update `flake.nix` and `flake.lock` directly on `main`.
-5. Push these files to `main`, then run **Build and cache** from the Actions tab. Check each matrix job.
+The default overlay adds `pkgs.llama-cpp-bin`, with the eight package names listed above. It does **not** replace `pkgs.llama-cpp`. Its packages keep this repository's pinned nixpkgs inputs, rather than rebuilding against your host's nixpkgs. The overlay supports `x86_64-linux` only.
 
-There is no cache account or token in this repository. The workflow cannot publish binaries until you complete these steps. Keep the repository variable set to the same cache that users configure below.
-
-## Use the binaries
-
-Install Nix with flakes enabled. Enable the cache once, with your actual cache name:
-
-```sh
-nix run nixpkgs#cachix -- use YOUR_CACHE_NAME
-```
-
-This command configures the cache URL and its public signing key. A multi-user Nix installation can require administrator access. For NixOS, copy those values into `nix.settings.substituters` and `nix.settings.trusted-public-keys` in your system configuration, then rebuild.
-
-Build and start a server:
-
-```sh
-nix build github:LoricAndre/llama-nix-bin#unstable-cuda
-./result/bin/llama-server --model /path/to/model.gguf
-```
-
-Or run the server in a temporary shell. This avoids reliance on the nixpkgs package's main-program metadata:
-
-```sh
-nix shell github:LoricAndre/llama-nix-bin#unstable-cuda --command llama-server --help
-```
-
-Use a package from this flake to match the cached store path. A local nixpkgs override with different inputs, GPU targets, or build flags can produce a different path and require a local build. Do not make these inputs follow another nixpkgs revision if you need an exact cache match.
-
-For a NixOS flake:
+Add this input to your existing flake:
 
 ```nix
-{
-  inputs.llama-nix-bin.url = "github:LoricAndre/llama-nix-bin";
-
-  outputs = { nixpkgs, llama-nix-bin, ... }: {
-    nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {
-      system = "x86_64-linux";
-      modules = [
-        ./configuration.nix
-        { environment.systemPackages = [
-            llama-nix-bin.packages.x86_64-linux.unstable-cuda
-          ];
-        }
-      ];
-    };
-  };
-}
+inputs.llama-nix-bin.url = "github:LoricAndre/llama-nix-bin";
 ```
 
-Add this input to your existing flake; the example omits your other inputs. Configure the public cache on the host separately. Update the `llama-nix-bin` input lock when you want newer binaries. Pin this repository to a commit if you need a fixed version.
+Include `llama-nix-bin` in your `outputs` arguments, then add this module to your `nixosSystem.modules` list:
 
-GPU drivers are not included in the cache setup. Enable the correct NVIDIA, ROCm, or Vulkan runtime on your host. GPU compatibility is determined by nixpkgs and your driver. CUDA dependencies are unfree; this flake permits them during evaluation. Check their licence terms before redistribution.
+```nix
+({ pkgs, ... }: {
+  nixpkgs.overlays = [ llama-nix-bin.overlays.default ];
+  environment.systemPackages = [ pkgs.llama-cpp-bin.unstable-cuda ];
+})
+```
 
-## Automatic updates and builds
+You can also select packages without the overlay:
 
-At **03:23 UTC each day**, and on a manual run, the workflow:
+```nix
+environment.systemPackages = [
+  llama-nix-bin.packages.x86_64-linux.unstable-cuda
+];
+```
 
-1. Reads the stable release links on the [official NixOS download page](https://nixos.org/download). It stops with an error if that page no longer has the expected links.
-2. Updates the stable branch in `flake.nix`, then runs `nix flake update` for both inputs.
-3. Commits changed inputs on the default branch. It does not create a pull request or require a personal access token.
-4. Passes the exact flake and lock file to eight independent build jobs. `fail-fast: false` keeps the other jobs running after a failure. Package evaluation is also done inside each build job.
-5. Builds all package outputs, including development headers. The Cachix action uploads new store paths and their dependencies. Existing cached outputs are reused.
+Update your `llama-nix-bin` input lock to get newer packages. Do not make its nixpkgs inputs follow your own nixpkgs input if you want to keep the nightly build inputs. Pin this repository to a commit for a fixed version.
 
-Pushes to `main` build the committed lock file without updating it. Pull requests run the Python tests and evaluate all variants; they do not run builds with cache secrets. Actions are pinned to commit hashes. Review and update these pins when required.
+## Availability
 
-Versions, source hashes, patches, and dependency hashes come from nixpkgs. **Nightly means new nixpkgs revisions, not llama.cpp Git HEAD.** Stable can have an older llama.cpp version than unstable.
+Check [Actions](https://github.com/LoricAndre/llama-nix-bin/actions) for build results. A failed variant does not stop the other variants from uploading, but a new input commit does not guarantee that all binaries are ready.
 
-A failed backend does not stop successful backends from uploading. The overall workflow still reports a failure, so it remains visible. Input commits happen before the builds: a new repository revision does **not** guarantee that every binary is already in the cache. Use the Actions results to confirm availability. If an output is missing, Nix can build it locally. A failed variant is retried on the next nightly run, even when the lock file has not changed.
+The free cache has limited storage and can remove entries, including current variants. It is not permanent release storage. If an output is missing, Nix can build it locally.
 
-GitHub can delay scheduled jobs. It also disables schedules in public repositories after 60 days without repository activity. Normal input-update commits provide activity; check the Actions tab if updates stop for a long period.
+## Development
 
-## Free service limits
+### Initial publishing setup
 
-[Cachix's free open-source allowance](https://www.cachix.org/pricing) is currently **5 GB**. Paths already in `cache.nixos.org` do not normally use this allowance. Cachix removes least recently used entries at the storage limit. This is a rolling cache, not permanent release storage. Eight variants and their GPU dependencies can exceed the allowance, so old or even current variants can be removed. Ask Cachix about more open-source storage if this occurs.
+1. Make this repository public to use free standard GitHub-hosted runners.
+2. Open the existing [llama-nix-bin cache](https://app.cachix.org/cache/llama-nix-bin#push).
+3. Set the GitHub Actions repository variable `CACHIX_CACHE` to `llama-nix-bin`.
+4. Set the repository secret `CACHIX_AUTH_TOKEN` to a token with write access to that cache.
+5. Keep the public cache URL and signing key in this README current. Never publish the authentication token or a private signing key.
+6. Permit Actions to write repository contents. Branch rules must let the bot update `flake.nix` and `flake.lock` directly on `main`.
+7. Push to `main`, or start **Build and cache** from the Actions tab. Check each matrix job.
 
-Cachix is the initial choice because it provides a signed public Nix cache and a maintained GitHub Action without a storage service to manage. GitHub artifacts are not a Nix substituter. Attic requires a server and storage; object storage also needs hosting, credentials, and cache signing. Neither guarantees a better free allowance.
+### Nightly updates and CI
 
-The workflow removes unused SDKs from each runner and limits Nix to one build job with two compilation cores. CUDA and ROCm can still exceed free runner disk, RAM, or the **six-hour job limit**, especially when a dependency is not in `cache.nixos.org`. This setup does not promise that every GPU build fits a free runner. If it fails for capacity reasons, use a larger or self-hosted runner for that matrix entry, or choose fewer GPU targets. Different target overrides also change cache paths.
+At **03:23 UTC each day**, and on a manual run, `.github/workflows/build.yml`:
 
-## Local checks
+1. Reads stable release links from the [official NixOS download page](https://nixos.org/download). Detection fails with an error if the expected links are missing.
+2. Updates the stable branch in `flake.nix` and runs `nix flake update` for both nixpkgs inputs.
+3. Commits changed inputs on the default branch with `GITHUB_TOKEN`. No personal access token is needed.
+4. Passes the exact flake and lock file to eight independent matrix jobs. `fail-fast: false` keeps the other jobs running after a failure. Each job evaluates its own package.
+5. Builds all outputs, including development headers. The Cachix action uploads new store paths and their dependencies; existing cached outputs are reused.
+
+Build runners also use the [NixOS CUDA binary cache](https://cache.nixos-cuda.org), with its public signing key, to reuse available CUDA packages instead of compiling them. The standard NixOS cache and this project's Cachix cache remain enabled.
+
+Source versions, hashes, patches, and dependency hashes stay under nixpkgs control. The overlay exports the same derivations as the package outputs.
+
+Pushes to `main` build the committed inputs without updating them. Pull requests run the Python tests and evaluate all variants; they do not run cache-enabled builds. Actions are pinned to commit hashes; review and update those pins when needed.
+
+Inputs are committed before builds start. A build failure leaves the input update in place and is reported by Actions. Failed variants are retried the next night even if the lock file does not change.
+
+GitHub can delay scheduled runs. It disables schedules in public repositories after 60 days without repository activity. Input-update commits normally provide activity; check Actions if updates stop for a long period.
+
+### Capacity and cache service
+
+[Cachix's free open-source allowance](https://www.cachix.org/pricing) is currently **5 GB**. Paths already in `cache.nixos.org` do not normally use this allowance. Cachix removes least recently used entries at the storage limit. Eight variants and GPU dependencies can exceed it. Request more open-source storage if required.
+
+Cachix provides a signed public Nix cache and a maintained GitHub Action without a server to manage. GitHub artifacts are not a Nix substituter. Attic needs a server and storage; object storage also needs hosting, credentials, and signing. Neither guarantees a better free allowance.
+
+The workflow removes unused runner SDKs and limits Nix to one build job with two compilation cores. CUDA and ROCm can still exceed free runner disk, RAM, or the **six-hour job limit**, especially for dependencies missing from `cache.nixos.org`. Use a larger or self-hosted runner for affected matrix entries, or select fewer GPU targets. Target changes also change cache paths. Review CUDA redistribution licence terms before publishing its dependencies.
+
+### Local checks
 
 ```sh
 python3 -m unittest discover -s tests -v
+nix eval --impure --expr 'import ./tests/overlay.nix (builtins.getFlake (toString ./.))'
 nix flake check --no-build --show-trace
 nix build '.#unstable-cpu^*'
 ```
 
-To update inputs locally, run `python3 scripts/update-inputs.py`. Review and commit the changes to both `flake.nix` and `flake.lock`.
+To update inputs locally, run `python3 scripts/update-inputs.py`. Review and commit both `flake.nix` and `flake.lock`.
