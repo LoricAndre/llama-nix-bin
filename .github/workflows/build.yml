@@ -1,0 +1,103 @@
+name: Build and cache
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+      - name: Test release detection
+        run: python3 -m unittest discover -s tests -v
+      - name: Update stable release and nixpkgs revisions
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: python3 scripts/update-inputs.py
+      - name: Check locked inputs
+        run: nix flake metadata --no-write-lock-file
+      - name: Evaluate all variants for pull requests
+        if: github.event_name == 'pull_request'
+        run: nix flake check --no-build --show-trace
+      - name: Save updated inputs
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref_name == github.event.repository.default_branch
+        run: |
+          if ! git diff --quiet -- flake.nix flake.lock; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add flake.nix flake.lock
+            git commit -m 'chore: update nixpkgs inputs'
+            git push
+          fi
+      # GITHUB_TOKEN commits do not trigger push workflows. Pass this exact snapshot.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: build-inputs
+          path: |
+            flake.nix
+            flake.lock
+          retention-days: 7
+
+  build:
+    needs: prepare
+    # Pull requests evaluate packages, but cannot build with cache credentials.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [unstable, stable]
+        backend: [cpu, cuda, rocm, vulkan]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: build-inputs
+      - name: Check cache configuration
+        env:
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          test -n "$CACHIX_CACHE" || { echo 'Set the CACHIX_CACHE repository variable'; exit 1; }
+          test -n "$CACHIX_AUTH_TOKEN" || { echo 'Set the CACHIX_AUTH_TOKEN repository secret'; exit 1; }
+      - name: Make room for GPU toolchains
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          df -h /
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
+        with:
+          extra_nix_config: |
+            max-jobs = 1
+            cores = 2
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: ${{ vars.CACHIX_CACHE }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Build all package outputs
+        env:
+          PACKAGE: ${{ matrix.channel }}-${{ matrix.backend }}
+        run: nix build --print-build-logs --out-link result ".#${PACKAGE}^*"
+      - name: Record output paths
+        env:
+          PACKAGE: ${{ matrix.channel }}-${{ matrix.backend }}
+        run: |
+          echo "### $PACKAGE" >> "$GITHUB_STEP_SUMMARY"
+          nix path-info --json ./result* >> "$GITHUB_STEP_SUMMARY"
