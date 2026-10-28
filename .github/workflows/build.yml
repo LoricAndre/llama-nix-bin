@@ -28,7 +28,7 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Test overlay package paths
         run: nix eval --impure --expr 'import ./tests/overlay.nix (builtins.getFlake (toString ./.))'
-      - name: Update stable release and nixpkgs revisions
+      - name: Update stable release and source revisions
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: python3 scripts/update-inputs.py
       - name: Check locked inputs
@@ -43,7 +43,7 @@ jobs:
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add flake.nix flake.lock
-            git commit -m 'chore: update nixpkgs inputs'
+            git commit -m 'chore: update package inputs'
             git push
           fi
       # GITHUB_TOKEN commits do not trigger push workflows. Pass this exact snapshot.
@@ -64,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        channel: [unstable, stable]
+        channel: [unstable, stable, master]
         backend: [cpu, cuda, rocm, vulkan]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

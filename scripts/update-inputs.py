@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Follow the stable release linked by NixOS, then update both lock nodes."""
+"""Follow the stable release linked by NixOS, then update all flake inputs."""
 
 import re
 import subprocess

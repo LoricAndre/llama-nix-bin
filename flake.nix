@@ -1,13 +1,14 @@
 {
-  description = "Cached llama.cpp variants from stable and unstable nixpkgs";
+  description = "Cached llama.cpp variants from stable and unstable nixpkgs and upstream master";
 
   inputs = {
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-26.05";
+    llama-cpp.url = "github:ggml-org/llama.cpp/master";
   };
 
   outputs =
-    { nixpkgs-unstable, nixpkgs-stable, ... }:
+    { nixpkgs-unstable, nixpkgs-stable, llama-cpp, ... }:
     let
       system = "x86_64-linux";
       lib = nixpkgs-unstable.lib;
@@ -21,7 +22,15 @@
         "rocm"
         "vulkan"
       ];
-      packages = lib.concatMapAttrs (
+      packages = nixpkgsPackages // masterPackages;
+      masterPackages = lib.genAttrs (map (variant: "master-${variant}") variants) (
+        name:
+        let
+          variant = lib.removePrefix "master-" name;
+        in
+        llama-cpp.packages.${system}.${if variant == "cpu" then "default" else variant}
+      );
+      nixpkgsPackages = lib.concatMapAttrs (
         channel: source:
         let
           pkgs = import source {

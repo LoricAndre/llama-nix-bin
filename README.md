@@ -1,6 +1,6 @@
 # llama-nix-bin
 
-Prebuilt `llama-cpp` packages for **x86_64-linux**, updated nightly from `nixpkgs-unstable` and the latest stable NixOS release. Available backends: CPU, NVIDIA CUDA, AMD ROCm, and Vulkan.
+Prebuilt `llama-cpp` packages for **x86_64-linux**, updated nightly from `nixpkgs-unstable`, the latest stable NixOS release, and llama.cpp's `master` branch. Available backends: CPU, NVIDIA CUDA, AMD ROCm, and Vulkan.
 
 ## Enable the binary cache
 
@@ -70,16 +70,17 @@ nix shell github:LoricAndre/llama-nix-bin#stable-vulkan --command llama-server -
 
 These commands require flakes to be enabled. Configure the cache separately as shown above.
 
-| nixpkgs source | CPU | NVIDIA CUDA | AMD ROCm | Vulkan |
+| Package source | CPU | NVIDIA CUDA | AMD ROCm | Vulkan |
 | --- | --- | --- | --- | --- |
 | `nixpkgs-unstable` | `unstable-cpu` | `unstable-cuda` | `unstable-rocm` | `unstable-vulkan` |
 | Latest stable NixOS release | `stable-cpu` | `stable-cuda` | `stable-rocm` | `stable-vulkan` |
+| llama.cpp `master` | `master-cpu` | `master-cuda` | `master-rocm` | `master-vulkan` |
 
-The default package is `unstable-cpu`. The CPU variant keeps the nixpkgs BLAS default. Versions come from nixpkgs, not llama.cpp Git HEAD; stable can have an older version than unstable.
+The default package is `unstable-cpu`. The nixpkgs CPU variants keep the nixpkgs BLAS default. Stable and unstable versions come from nixpkgs; stable can have an older version than unstable. The `master-*` variants use the upstream flake's `default`, `cuda`, `rocm`, and `vulkan` packages directly, with its own pinned dependencies. The lock file pins a master commit; it does not fetch Git HEAD on each build.
 
 ### Nixpkgs overlay
 
-The default overlay adds `pkgs.llama-cpp-bin`, with the eight package names listed above. It does **not** replace `pkgs.llama-cpp`. Its packages keep this repository's pinned nixpkgs inputs, rather than rebuilding against your host's nixpkgs. The overlay supports `x86_64-linux` only.
+The default overlay adds `pkgs.llama-cpp-bin`, with the twelve package names listed above. It does **not** replace `pkgs.llama-cpp`. Its packages keep this repository's pinned flake inputs, rather than rebuilding against your host's nixpkgs. The overlay supports `x86_64-linux` only.
 
 Add this input to your existing flake:
 
@@ -129,14 +130,14 @@ The free cache has limited storage and can remove entries, including current var
 At **03:23 UTC each day**, and on a manual run, `.github/workflows/build.yml`:
 
 1. Reads stable release links from the [official NixOS download page](https://nixos.org/download). Detection fails with an error if the expected links are missing.
-2. Updates the stable branch in `flake.nix` and runs `nix flake update` for both nixpkgs inputs.
+2. Updates the stable branch in `flake.nix` and runs `nix flake update` for both nixpkgs inputs and llama.cpp master.
 3. Commits changed inputs on the default branch with `GITHUB_TOKEN`. No personal access token is needed.
-4. Passes the exact flake and lock file to eight independent matrix jobs. `fail-fast: false` keeps the other jobs running after a failure. Each job evaluates its own package.
+4. Passes the exact flake and lock file to twelve independent matrix jobs. `fail-fast: false` keeps the other jobs running after a failure. Each job evaluates its own package.
 5. Builds all outputs, including development headers. The Cachix action uploads new store paths and their dependencies; existing cached outputs are reused.
 
 Build runners also use the [NixOS CUDA binary cache](https://cache.nixos-cuda.org), with its public signing key, to reuse available CUDA packages instead of compiling them. The standard NixOS cache and this project's Cachix cache remain enabled.
 
-Source versions, hashes, patches, and dependency hashes stay under nixpkgs control. The overlay exports the same derivations as the package outputs.
+Source versions, hashes, patches, and dependency hashes stay under the control of nixpkgs or the upstream llama.cpp flake. The overlay exports the same derivations as the package outputs.
 
 Pushes to `main` build the committed inputs without updating them. Pull requests run the Python tests and evaluate all variants; they do not run cache-enabled builds. Actions are pinned to commit hashes; review and update those pins when needed.
 
@@ -146,7 +147,7 @@ GitHub can delay scheduled runs. It disables schedules in public repositories af
 
 ### Capacity and cache service
 
-[Cachix's free open-source allowance](https://www.cachix.org/pricing) is currently **5 GB**. Paths already in `cache.nixos.org` do not normally use this allowance. Cachix removes least recently used entries at the storage limit. Eight variants and GPU dependencies can exceed it. Request more open-source storage if required.
+[Cachix's free open-source allowance](https://www.cachix.org/pricing) is currently **5 GB**. Paths already in `cache.nixos.org` do not normally use this allowance. Cachix removes least recently used entries at the storage limit. Twelve variants and GPU dependencies can exceed it. Request more open-source storage if required.
 
 Cachix provides a signed public Nix cache and a maintained GitHub Action without a server to manage. GitHub artifacts are not a Nix substituter. Attic needs a server and storage; object storage also needs hosting, credentials, and signing. Neither guarantees a better free allowance.
 
